@@ -11,7 +11,10 @@ import com.pt.draw.service.DrawService;
 import lombok.AccessLevel;
 import lombok.experimental.FieldDefaults;
 import lombok.extern.slf4j.Slf4j;
+import org.apache.rocketmq.spring.core.RocketMQTemplate;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.cache.annotation.CacheEvict;
+import org.springframework.cache.annotation.Cacheable;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.stereotype.Service;
@@ -21,10 +24,13 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Random;
 
+import static com.pt.draw.util.Constant.TOPIC_PRIZE;
+
 @Slf4j
 @Service
 @FieldDefaults(level = AccessLevel.PRIVATE)
 public class DrawServiceImpl implements DrawService {
+    private static final String TOPIC = "prize-topic";
 
     @Autowired
     PrizeRepository prizeRepository;
@@ -32,6 +38,8 @@ public class DrawServiceImpl implements DrawService {
     UserRepository userRepository;
     @Autowired
     UserPrizeRepository userPrizeRepository;
+    @Autowired
+    private RocketMQTemplate rocketMQTemplate;
 
     @Transactional
     public ResponseEntity<DrawResultDTO> draw(Long userId) {
@@ -47,6 +55,8 @@ public class DrawServiceImpl implements DrawService {
         if (drawnPrize != null) {
             // save user
             UserEntity drawnUser = user.get();
+//            rocketMQTemplate.convertAndSend(TOPIC_PRIZE, drawnUser);
+
             drawnUser.setDrawCount(user.get().getDrawCount() + 1);
             drawnUser.setAvailableDrawCount(user.get().getAvailableDrawCount() - 1);
             userRepository.save(drawnUser);
@@ -57,8 +67,8 @@ public class DrawServiceImpl implements DrawService {
             log.info(userPrize.toString());
             userPrizeRepository.save(userPrize);
 
-            drawnPrize.setQuantity(drawnPrize.getQuantity() - 1);
-            prizeRepository.save(drawnPrize);
+//            drawnPrize.setQuantity(drawnPrize.getQuantity() - 1);
+//            prizeRepository.save(drawnPrize);
 
             DrawResultDTO drawResult = DrawResultDTO.builder().userId(userId).userName(drawnUser.getUserName())
                     .prizeId(drawnPrize.getId()).prizeName(drawnPrize.getPrizeName()).build();
@@ -68,8 +78,9 @@ public class DrawServiceImpl implements DrawService {
         return new ResponseEntity<>(HttpStatus.NOT_ACCEPTABLE);
     }
 
+    @CacheEvict(value = "prizes", allEntries = true)
     PrizeEntity drawPrize() {
-        List<PrizeEntity> prizes = prizeRepository.findAll();
+        List<PrizeEntity> prizes = getPrizeList();
 
         double totalProbability = 0;
         List<PrizeEntity> selectablePrizes = new ArrayList<>();
@@ -108,4 +119,14 @@ public class DrawServiceImpl implements DrawService {
         return new ResponseEntity<>(userPrizeList, HttpStatus.OK);
     }
 
+    public ResponseEntity<List<PrizeEntity>> getAllPrizeList() {
+        var prizeList = getPrizeList();
+        if (prizeList.isEmpty()) return new ResponseEntity<>(HttpStatus.NOT_FOUND);
+        return new ResponseEntity<>(prizeList, HttpStatus.OK);
+    }
+
+    @Cacheable(value = "prizes")
+    List<PrizeEntity> getPrizeList() {
+        return prizeRepository.findAll();
+    }
 }
